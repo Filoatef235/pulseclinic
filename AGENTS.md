@@ -93,7 +93,7 @@ Who may transition: patient may cancel own appointment before the cutoff (defaul
 
 Rules: normalized model; FKs, unique and check constraints; indexes from access patterns; all changes via versioned Flyway migrations (`V1__...sql`); never edit applied migrations; `timestamptz` everywhere timestamps are instants; UUID primary keys (`gen_random_uuid()`); `created_at/updated_at` on mutable tables; `version` on appointments for optimistic locking. Roles stored as check-constrained text (not PG enums) so Flyway stays simple.
 
-**Step 2 — v1 schema lock (awaiting owner approval; no migrations written until approved):**
+**Step 2 — v1 schema lock (done).** V1–V6 migrations exist; V7 demo seed is later.
 
 - **One role per user** on `users.role`. No `user_roles` table in v1.
 - **Slots are computed, not stored.** No `slots` table. Generate from weekly `working_hours` (clinic-local `time`) minus `time_off` minus active appointments (`PENDING`/`CONFIRMED`). Slot length and cancel cutoff live in `clinic_settings`. Service occupies `ceil(duration_minutes / slot_length_minutes)` consecutive slots. `appointments.ends_at = starts_at + service.duration`.
@@ -103,7 +103,7 @@ Rules: normalized model; FKs, unique and check constraints; indexes from access 
 - **Walk-in patients:** `patients.user_id` nullable. Doctors and staff must have a user (`doctors.user_id` and `staff_profiles.user_id` NOT NULL UNIQUE).
 - **v1 tables only** through V6 + demo seed. `waitlist_entries`, `reviews`, `doctor_notes`, payments, ML — later migrations, not v1.
 
-Migration order (planned, not yet created):
+Migration order (V1–V6 written; V7 later / demo only):
 
 | Migration | Contents |
 |---|---|
@@ -116,7 +116,7 @@ Migration order (planned, not yet created):
 | V7 | seed data (demo accounts, doctors, services, hours) — dev/demo profile only |
 | later | waitlist, reviews, doctor_notes, payments, invoices, prescriptions, ml_predictions, documents |
 
-Approved v1 DDL (create only after owner says approved + start building):
+Approved v1 DDL:
 
 ```sql
 CREATE EXTENSION IF NOT EXISTS btree_gist;
@@ -411,18 +411,190 @@ Write an ADR (Context, Decision, Alternatives, Reasoning, Consequences) for: aut
 ## 15. Build order (one step at a time, stop after each for approval)
 
 1. Product locked (done).
-2. Data model finalized — **awaiting owner approval** of section 6 (then mark done).
+2. Data model finalized (done).
 3. **Deploy an empty skeleton** (Spring Boot + React + Postgres) with CI and HTTPS; ship every later step to the live URL.
 4. Slots and booking with DB-enforced conflict rejection + conflict and concurrency tests.
 5. Auth and roles.
 6. React happy path against the real API.
 7. Cancel, reschedule, statuses, emails (outbox).
 8. Staff calendar and admin management.
-9. Hardening: validation, rate limiting, seed data, secrets, Swagger, observability.
-10. Polish: mobile, empty/error states, accessibility pass, README with architecture diagram, demo script.
-11. v1.1 features.
-12. v2 features as chosen by the owner.
-13. ML phase, only with real data.
+
+### 8.1 Product expansion after Step 8, before hardening
+
+Build the following as coherent end-to-end features. For every feature, inspect existing code first; add versioned Flyway migrations for schema changes; enforce authorization and business rules in Spring services; use DTOs and consistent API errors; add frontend loading, empty, error, and success states; and add relevant automated tests. Do not build a UI-only mock.
+
+#### A. Admin-created doctor and staff accounts with local profile photos
+
+**Purpose:** give administrators a full team-management workflow. An admin can create and manage doctor and staff accounts; each person completes their own password setup and sees their personal identity/profile information after normal sign-in.
+
+**Admin workflow:**
+
+1. In Team Management, an admin selects **Add team member** and chooses `DOCTOR` or `STAFF`.
+2. The admin enters a full name, work email, phone number, title, short biography, and active/inactive status. Doctors additionally require specialty, offered services, and working hours. Staff do not receive doctor-only scheduling fields.
+3. The admin may select a profile photo through an accessible **Choose file** control. Show a local preview before saving and provide explicit replace and remove actions.
+4. The backend validates ownership/role permissions, image type and file size, and all profile inputs. Store files in a dedicated Docker-mounted local upload directory during development; never store image binaries inside PostgreSQL. Store only a generated storage key/URL in the relevant profile record. Serve uploads through a controlled backend endpoint, not arbitrary filesystem paths.
+5. The system creates a disabled-for-password-login invitation state and a random, single-use, hashed invitation token with an expiry (default 24 hours). Return a development-friendly invitation link to the admin UI; later notification infrastructure sends it by email. Never store or log a raw password or raw invitation token.
+6. The doctor/staff member opens the one-time link, chooses a password that meets the configured password policy, and the backend atomically consumes the token, records password setup, and enables normal sign-in. Expired or used links are rejected safely. The admin can revoke and resend an invitation.
+7. After setup, people always use the existing email/password sign-in screen. Existing patients and existing demo accounts continue to use their current sign-in behavior unchanged.
+
+**Profile and access behavior:**
+
+- Doctor workspace shows profile photo, name, title/specialty, bio, working-hours summary, and own appointments.
+- Staff workspace shows profile photo, name, title, short bio, and operations workspace.
+- A doctor may edit only their own biography and photo. Only an admin controls role, services, specialty, working hours, activation, and invitations.
+- An admin may edit member details later, replace/remove a photo, deactivate/reactivate without deleting appointment/history data, and search/filter by role, specialty, and account status.
+- Deactivation blocks new sign-in/session renewal and preserves historical appointments/audit data. Existing sessions must be invalidated or rejected on the next authenticated request.
+- Record `last_signed_in_at` after successful sign-in and expose it only to authorized admins/the account owner as appropriate.
+- Compute an explicit profile-completion state from required profile fields; do not infer it only in the UI.
+- Write audit records for account creation, profile edits, activation changes, invitation resend/revoke, role/service/schedule changes, and photo replacement/removal. Include actor, target, action, timestamp, and safe metadata only.
+
+**Suggested data/API shape:** add migration-backed fields/tables for photo storage key/URL, title, staff bio/contact fields as needed, invitation tokens (hashed token, user id, expires/used/revoked timestamps), last sign-in, and profile completion. Provide role-protected admin CRUD/search endpoints, invitation setup/resend endpoints, authenticated self-profile endpoints, and validated multipart upload endpoints. Do not expose raw upload filesystem paths or tokens in logs.
+
+#### B. Reschedule appointment
+
+**Purpose:** patients can move an eligible appointment to a new available time without creating duplicate or overlapping bookings.
+
+- Provide a reschedule action only for the appointment owner and only while the current appointment is eligible under the configurable cancellation cutoff. Staff/admin may reschedule appointments they are authorized to manage.
+- The UI reuses the real service → clinician → available-slot flow, prefilled with the current service/clinician where appropriate, and clearly displays the old and proposed new time.
+- Implement rescheduling as one transactional backend operation: validate actor ownership/permissions, validate the new slot and service duration, protect against concurrent changes, create/update the replacement booking and cancel the original only when the replacement succeeds. PostgreSQL exclusion constraints remain the final authority for conflicts.
+- On conflict, return the standard `409 APPOINTMENT_SLOT_UNAVAILABLE` response and leave the original appointment unchanged. Write status history, audit records, and an outbox event only after the transaction succeeds.
+- Immediately update patient/staff/doctor/admin query caches after success and show a clear success/error message.
+
+#### C. Email verification and password reset
+
+**Purpose:** provide production-style account activation, email ownership verification, and safe account recovery without changing normal sign-in after setup.
+
+- Registration creates an email-verification token with a hashed, single-use, expiring value. Account behavior before verification must be explicitly defined and enforced consistently.
+- Verification endpoint consumes the token atomically and records `email_verified`.
+- “Forgot password” accepts an email without disclosing whether it exists, creates a hashed, single-use, expiring reset token when applicable, and queues a reset email through the outbox.
+- The reset page validates password policy and consumes the token atomically. Revoke existing refresh/session tokens after a successful reset.
+- Apply rate limits to registration, verification resend, password-reset request, and reset completion. Never log tokens or passwords.
+
+#### D. Real notification flow
+
+**Purpose:** reliably notify users of booking lifecycle events without allowing email failures to break appointments.
+
+- Use the existing transactional `email_outbox`: booking, confirmation, cancellation, reschedule, invitation, verification, password reset, and reminder events write an outbox row in the same transaction as the domain change.
+- Implement an `EmailService` adapter with a local development implementation and a production provider implementation selected only through configuration. Do not scatter provider SDK calls through domain services.
+- A background worker sends pending events after commit, tracks attempts/errors/sent timestamps, retries with bounded backoff, and makes delivery idempotent.
+- Templates must contain only appropriate minimum data: recipient name, clinic name, service, clinician, localized appointment time, status/action link. Never include medical details.
+- Admin-visible diagnostics may show delivery status but never tokens, passwords, or provider secrets.
+
+#### E. Staff booking for walk-ins and phone calls
+
+**Purpose:** staff can create an appointment for a person who does not have an online account.
+
+- Add a staff/admin-only booking workflow with patient search first, then create/select a patient.
+- Allow a walk-in/phone patient record with no linked `users` row, using the existing nullable `patients.user_id` design. Require minimal safe details such as full name and optional phone/email according to validation rules.
+- Staff selects service, clinician, and a real available slot using the same backend slot/booking rules as patient self-booking. The system must never bypass the exclusion constraints or status history/outbox/audit logic.
+- Clearly label the source as staff/phone/walk-in and record `created_by`. If a matching account later exists, do not automatically link it without an explicit, authorized matching process.
+
+#### F. Better patient appointment details and calendar export
+
+**Purpose:** give patients one clear place to understand and manage each appointment.
+
+- Add an authorized appointment-details page/view showing service, clinician, clinician specialty, date/time in clinic timezone, duration, status badge, status timeline, and permitted actions.
+- Status timeline uses `appointment_status_history` and shows the safe event, time, and actor role where authorized; it must not expose other patients or sensitive metadata.
+- Show cancel/reschedule only when permitted, with concise cutoff/error explanations. Completed, no-show, and cancelled appointments are read-only history.
+- For confirmed appointments, offer an authenticated `.ics` download endpoint. Generate a standards-compliant calendar event with UID, clinic-safe title, start/end, timezone/UTC correctness, and cancellation/reschedule semantics. Do not expose an event to another user.
+
+#### G. Doctor public profiles
+
+**Purpose:** improve trust and help patients choose a clinician before booking.
+
+- Create public doctor profile pages containing a photo, full name, professional title, specialty, safe bio, offered active services, availability summary, and booking action.
+- Never expose private staff information, internal schedule notes, inactive clinicians, time-off reasons, or direct contact details unless explicitly approved.
+- Profile pages query only active doctors/services and route booking into the existing booking flow with the clinician preselected.
+- Use accessible image fallbacks, loading/empty/error states, responsive layout, and cache invalidation when an admin edits a public profile.
+
+#### H. Search and filters for operations
+
+**Purpose:** allow staff/admin to find operational appointments without unbounded or client-only filtering.
+
+- Add server-side pagination with enforced maximum page size and filter parameters for patient name/email (authorized scope only), clinician, service, status, date range, and for admins/staff where appropriate.
+- Use explicit allow-listed sort fields and stable default ordering. Validate date ranges and filter values.
+- UI includes clear filters, applied-filter summary, reset action, pagination, loading/empty/error states, and URL/query-state persistence where useful.
+- Doctors remain restricted to their own appointments; staff/admin access only their authorized clinic scope. Protect against IDOR and avoid leaking patient data via search suggestions.
+
+#### I. Admin dashboard analytics
+
+**Purpose:** give admins a useful operational snapshot based on real appointments, not hard-coded numbers.
+
+- Add a role-protected analytics endpoint/dashboard with a selected date range and clinic-timezone-aware calculations.
+- Show bookings today, pending requests, confirmed/completed/cancelled/no-show counts, no-show rate, and clinician workload/utilization. Define each metric explicitly in code/docs.
+- Use efficient aggregate queries, indexes, bounded ranges, loading/empty/error states, and clear “no data” treatment. Do not load all appointments to the browser to calculate metrics.
+- Keep analytics read-only and avoid exposing unnecessary patient-identifying data.
+
+#### J. Waitlist for fully booked times
+
+**Purpose:** let patients express interest in a full service/doctor/date and let staff fill cancellations safely.
+
+- Add migration-backed `waitlist_entries` only when this feature begins. Each entry records patient, optional clinician preference, service, requested date/range, status, timestamps, and contact preference. Prevent inappropriate duplicate active entries.
+- When no slot is available, offer an accessible waitlist action; patients can view/cancel only their own entries. Staff/admin manage authorized entries.
+- A cancellation may trigger a non-blocking outbox notification/offer. An offer does not reserve a slot indefinitely unless a documented expiry/reservation mechanism is implemented.
+- Booking from waitlist must always re-check real slot availability and obey the same database constraints. Never guarantee availability solely because an email was sent.
+
+9. **Hardening: validation, rate limiting, seed data, secrets, Swagger, observability.**
+
+   **Goal:** make the complete v1 workflow safe, diagnosable, and trustworthy before calling it production-ready.
+
+   - Audit every public and protected endpoint for request validation, resource-level authorization, correct status codes, and consistent `RestControllerAdvice` error bodies. Ensure frontend forms render field/server errors accessibly and do not depend on frontend validation alone.
+   - Add rate limits to login, registration, invitation/password-reset requests, verification resend, and appointment booking. Use the simplest server-side implementation that works with a single application instance first; move to a shared distributed limiter only if the deployment topology requires multiple backend instances.
+   - Confirm all secrets are environment variables and `.env.example` contains placeholders only. Validate required production configuration at startup without logging values. Keep local `.env` ignored by Git.
+   - Add OpenAPI/Swagger using the approved Springdoc approach, secure or disable interactive mutation endpoints appropriately in production, and keep API documentation synchronized with DTOs and error contracts.
+   - Add/verify Actuator health checks, readiness/liveness behavior, structured logs, request/correlation IDs, safe audit logs, and basic operational metrics. Health endpoints must not disclose secrets or private data.
+   - Verify demo seed data is explicitly limited to the demo profile and contains only fake data. Provide stable reset instructions for local development without forcing a database reset for ordinary rebuilds.
+   - Complete automated testing: backend unit/API/integration tests with Testcontainers PostgreSQL; frontend behavior tests with Vitest/React Testing Library; and Playwright flows for booking and staff calendar. Required cases include concurrent slot booking, DB conflict mapping, role/resource authorization, invalid state changes, cancellation cutoff, reschedule rollback, time off, DST/time zone edges, and authentication failures.
+   - Add GitHub Actions to run formatting/lint, compile, unit/integration tests, frontend tests, security/dependency scan, and Docker build on every push/PR. Do not mark CI healthy solely because compilation succeeds.
+
+   **Recommendation:** finish this before adding v1.1. The preferred local email implementation is an in-app/outbox preview or development logger; use Resend first for production because it is simpler than SES for an early project. Keep the current local Docker photo storage for development, but document cloud object storage as a required production migration.
+
+10. **Polish: mobile, empty/error states, accessibility pass, README with architecture diagram, demo script, deployment.**
+
+    **Goal:** turn the functionally complete system into a clear portfolio project that a stranger can run, test, and understand.
+
+    - Perform a complete responsive pass at phone, tablet, laptop, and wide-desktop widths. Preserve the calm, premium medical visual language; do not use animation where it harms usability or reduced-motion preferences.
+    - Verify every data-driven screen has intentional loading, empty, error, unauthorized, forbidden, and retry states. Verify optimistic updates and cache invalidation make changes appear immediately without manual refresh.
+    - Conduct an accessibility pass: semantic landmarks/headings, labels and inline errors, keyboard operation, visible focus, dialogs with focus management, contrast, screen-reader names, form autocomplete, and reduced-motion behavior.
+    - Improve performance only after measurement: avoid unbounded lists, unnecessary refetching, oversized images, and N+1 database access. Use pagination and database aggregation for operations/analytics screens.
+    - Write/update `README.md`, architecture overview/diagram, local setup, environment variables, demo accounts, Docker commands, test commands, API documentation URL, data-reset instructions, deployment guide, and a 60-second demo script. Add ADRs for authentication, concurrency, notification architecture, database strategy, and storage boundary.
+    - Push the single repository to GitHub, confirm CI passes, and deploy frontend, backend, and managed PostgreSQL to Render or Railway. Set production environment variables and use cloud object storage for uploaded profile images. Verify the public HTTPS URL, health endpoint, login, booking, status workflow, and email delivery.
+
+    **Recommendation:** use Railway for the simplest combined early deployment, or Render if clearer separate-service control is preferred. Choose one based on current pricing/limits at deployment time; do not hard-code provider-specific logic into domain code. Production photo storage should be Cloudinary or S3-compatible object storage, not Docker disk.
+
+11. **v1.1 features.**
+
+    **Goal:** add high-value convenience features after v1 is deployed, stable, monitored, and backed by real usage feedback.
+
+    - Add 24-hour reminder emails through the existing outbox/scheduler with opt-out-aware messaging.
+    - Expand public and authenticated patient/doctor profile pages, including safe profile photo/bio management and appointment history/search.
+    - Add an audit-log viewer restricted to administrators, with pagination, safe metadata, filters, and no secret/PHI exposure.
+    - Add a small operational dashboard for bookings/day, no-show rate, and utilization, preserving clinic-timezone calculations and database-side aggregates.
+    - Add `.ics` export improvements, optional calendar subscriptions only after secure token design, EN/AR language support with correct RTL layout, dark mode, and PWA install/offline-shell behavior.
+
+    **Recommendation:** prioritize reminder emails, audit log viewer, EN/AR + RTL, and PWA only after measuring user value. Avoid adding all v1.1 items at once; deliver one feature with tests and production verification at a time.
+
+12. **v2 features as chosen by the owner.**
+
+    **Goal:** expand only in response to a demonstrated product need, keeping privacy, security, and maintainability ahead of feature count.
+
+    - Candidate modules include payments/deposits, invoices/PDF receipts, SMS/WhatsApp, Google Calendar synchronization, recurring appointments, patient medical profiles, prescriptions, document upload, ratings/reviews, family accounts, telehealth links, insurance fields, multi-clinic support, in-app notifications, two-factor authentication, data export/delete, reporting exports, and QR check-in.
+    - Each chosen module requires a short requirements decision before implementation: user value, data sensitivity, authorization model, provider adapter, failure/retry/idempotency behavior, database migrations, tests, audit requirements, and deployment/configuration impact.
+    - Use adapters for external providers (payments, messaging, storage, calendar) and never let a vendor SDK become a domain dependency. Payment, medical-data, document, and identity features require a specific security/privacy review before work starts.
+
+    **Recommendation:** choose at most one major v2 module at a time. The best early choices for portfolio value are payments/deposits, SMS reminders, Google Calendar sync, or QR check-in; defer medical records, prescriptions, and insurance until there is a real compliance and product requirement.
+
+13. **ML phase, only with real data.**
+
+    **Goal:** add advisory predictions only after sufficient real, consented booking/cancellation data exists and v1/v1.1 are stable.
+
+    - Keep PostgreSQL as the system of record. Build ML as a separate Python/FastAPI service under `ml/`, reading from a controlled export/read path and returning predictions through explicit HTTP contracts. Do not train or host models inside Spring Boot.
+    - Start with no-show prediction using tabular features such as lead time, service, doctor, day/hour, prior attendance history, and reminder status. Use interpretable baselines and gradient boosting (XGBoost/LightGBM) before considering deep learning.
+    - Store model name/version, score, prediction timestamp, and explanation-safe metadata in a migration-backed `ml_predictions` table. Maintain evaluation reports, leakage checks, model/version artifacts, drift/performance monitoring, and explicit limitations.
+    - Predictions remain advisory: they may prioritize reminders or surface staff insights but never reject, cancel, overbook, diagnose, or otherwise make irreversible decisions automatically.
+    - Consider deep learning only for suitable data/tasks, such as symptom-to-specialty routing, review sentiment, chatbot assistance, or document OCR, after separate safety, privacy, and evaluation requirements are approved. A symptom helper must include a not-medical-advice notice and urgent-care escalation for red flags.
+
+    **Recommendation:** do not use deep learning for no-show prediction, demand forecasting, appointment duration, or basic slot ranking; tabular/time-series methods are usually simpler and stronger. Begin ML only after real data volume and quality support an honest evaluation, not from demo seed data.
 
 ## 16. Definition of done (per feature)
 

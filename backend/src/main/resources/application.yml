@@ -1,0 +1,51 @@
+spring:
+  application:
+    name: pulseclinic-api
+  jackson:
+    time-zone: UTC
+    serialization:
+      write-dates-as-timestamps: false
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/pulseclinic}
+    username: ${DATABASE_USERNAME:pulseclinic}
+    password: ${DATABASE_PASSWORD:pulseclinic}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: none
+    properties:
+      hibernate.jdbc.time_zone: UTC
+  flyway:
+    enabled: true
+
+server:
+  port: ${SERVER_PORT:8080}
+  error:
+    include-stacktrace: never
+    include-message: never
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+
+pulseclinic:
+  auth:
+    jwt-secret: ${JWT_SECRET}
+    access-token-minutes: 15
+    refresh-token-days: 30
+    secure-cookies: false
+  cors:
+    origins:
+      - http://localhost:5173
+      - http://localhost:3000
+
+logging:
+  pattern:
+    console: "%d{ISO8601} [%X{requestId}] %-5level %logger{36} - %msg%n"

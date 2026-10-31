@@ -1,0 +1,12 @@
+spring:
+  jpa:
+    show-sql: false
+
+pulseclinic:
+  auth:
+    secure-cookies: true
+
+logging:
+  level:
+    root: INFO
+    org.springframework: WARN

@@ -15,5 +15,35 @@ services:
       timeout: 5s
       retries: 20
 
+  backend:
+    build:
+      context: ./backend
+    environment:
+      SPRING_PROFILES_ACTIVE: prod,demo
+      DATABASE_URL: jdbc:postgresql://postgres:5432/pulseclinic
+      DATABASE_USERNAME: pulseclinic
+      DATABASE_PASSWORD: pulseclinic
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env before starting Docker Compose}
+      PULSECLINIC_AUTH_SECURE_COOKIES: "false"
+      PULSECLINIC_CORS_ORIGINS: http://localhost:3000
+      PULSECLINIC_UPLOAD_DIR: /app/uploads
+    ports:
+      - "8081:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - pulseclinic_uploads:/app/uploads
+
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
 volumes:
   pulseclinic_pg:
+  pulseclinic_uploads:

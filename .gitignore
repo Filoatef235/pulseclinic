@@ -7,5 +7,9 @@ target/
 .DS_Store
 Thumbs.db
 node_modules/
+.npm-cache/
 dist/
 backend/src/main/resources/application-local.yml
+frontend/coverage/
+/cd
+/docker
