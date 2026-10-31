@@ -27,8 +27,8 @@ describe("App", () => {
   it("shows the booking experience", async () => {
     vi.stubGlobal("fetch", vi.fn().mockImplementation((path: string) => Promise.resolve(
       path === "/api/v1/auth/me"
-        ? { ok: false, status: 401, json: async () => ({ code: "UNAUTHENTICATED" }) }
-        : { ok: true, status: 200, json: async () => [] },
+        ? { ok: false, status: 401, headers: { get: () => "application/json" }, json: async () => ({ code: "UNAUTHENTICATED" }) }
+        : { ok: true, status: 200, headers: { get: () => "application/json" }, json: async () => [] },
     )));
 
     render(<App />);
