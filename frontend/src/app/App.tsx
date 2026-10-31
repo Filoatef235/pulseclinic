@@ -857,6 +857,7 @@ function TeamMemberCreator() {
   const [photo, setPhoto] = useState<File | null>(null);
   const [invitationUrl, setInvitationUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const create = useMutation({
     mutationFn: async () => {
       await clinicApi.csrf();
@@ -874,6 +875,8 @@ function TeamMemberCreator() {
     },
     onSuccess: async (member) => {
       setInvitationUrl(member.invitationUrl);
+      setError(null);
+      setNotice(member.invitationUrl ? null : "Invitation email queued. Ask the team member to check their inbox.");
       setError(null);
       setFullName("");
       setEmail("");
@@ -998,6 +1001,7 @@ function TeamMemberCreator() {
           {create.isPending ? "Creating invitation…" : "Create invitation"}
         </button>
         {error && <p role="alert" className="mt-4 text-sm text-rose-700">{error}</p>}
+        {notice && <p role="status" className="mt-4 text-sm text-[#28584f]">{notice}</p>}
         {invitationUrl && (
           <div className="mt-5 rounded-xl bg-[#e6f3eb] p-4 text-sm text-[#28584f]">
             <p className="font-medium">Invitation created.</p>
@@ -1030,8 +1034,8 @@ function TeamDirectory() {
   const resend = useMutation({
     mutationFn: async (userId: string) => { await clinicApi.csrf(); return clinicApi.resendTeamInvitation(userId); },
     onSuccess: (url, userId) => {
-      setInvitation({ userId, url });
-      setInvitationNotice(null);
+      setInvitation(url ? { userId, url } : null);
+      setInvitationNotice(url ? null : "Invitation email queued. The team member should check their inbox.");
     },
     onError: (cause) => setInvitationNotice(cause instanceof ApiError ? cause.message : "The invitation could not be created. Please try again."),
   });
@@ -2341,6 +2345,7 @@ function AuthDialog({
   });
   const [resetMode, setResetMode] = useState(false);
   const [resetLink, setResetLink] = useState<string | null>(null);
+  const [resetNotice, setResetNotice] = useState<string | null>(null);
   if (!mode) return null;
   const requestReset = async () => {
     const email = form.getValues("email").trim();
@@ -2353,6 +2358,7 @@ function AuthDialog({
     try {
       const link = await clinicApi.requestPasswordReset(email);
       setResetLink(link || null);
+      setResetNotice(link ? null : "If this email exists, a reset link has been sent. Please check the inbox.");
     } catch (error) {
       form.setError("root", { message: error instanceof ApiError ? error.message : "The reset link could not be created. Please try again." });
     }
@@ -2424,8 +2430,9 @@ function AuthDialog({
             {form.formState.errors.root.message}
           </p>
         )}
-        {mode === "login" && !resetMode && <button type="button" className="btn-quiet mt-4" onClick={() => { setResetMode(true); setResetLink(null); form.clearErrors(); }}>Forgot password?</button>}
+        {mode === "login" && !resetMode && <button type="button" className="btn-quiet mt-4" onClick={() => { setResetMode(true); setResetLink(null); setResetNotice(null); form.clearErrors(); }}>Forgot password?</button>}
         {resetMode && resetLink && <div role="status" className="mt-4 rounded-xl bg-[#e6f3eb] p-3 text-sm text-[#28584f]"><p className="font-medium">Local reset link ready.</p><p className="mt-1">No email is sent in local development. Copy this link and open it in a new tab:</p><code className="mt-2 block break-all rounded-lg bg-white/70 p-2 text-xs">{window.location.origin}{resetLink}</code><button type="button" className="workspace-action mt-2" onClick={() => navigator.clipboard.writeText(`${window.location.origin}${resetLink}`).catch(() => undefined)}>Copy link</button></div>}
+        {resetMode && resetNotice && <p role="status" className="mt-4 rounded-xl bg-[#e6f3eb] p-3 text-sm text-[#28584f]">{resetNotice}</p>}
         <button
           className="btn-primary mt-6 w-full justify-center"
           type={resetMode ? "button" : "submit"}

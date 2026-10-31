@@ -9,12 +9,26 @@ public class PulseClinicProperties {
 
     private final Cors cors = new Cors();
     private final Auth auth = new Auth();
+    private final Notifications notifications = new Notifications();
 
     public Cors getCors() {
         return cors;
     }
 
     public Auth getAuth() { return auth; }
+    public Notifications getNotifications() { return notifications; }
+
+    public static class Notifications {
+        private String publicUrl = "http://localhost:3000";
+        private String resendApiKey;
+        private String from = "PulseClinic <onboarding@resend.dev>";
+        public String getPublicUrl() { return publicUrl; }
+        public void setPublicUrl(String publicUrl) { this.publicUrl = publicUrl; }
+        public String getResendApiKey() { return resendApiKey; }
+        public void setResendApiKey(String resendApiKey) { this.resendApiKey = resendApiKey; }
+        public String getFrom() { return from; }
+        public void setFrom(String from) { this.from = from; }
+    }
 
     public static class Auth {
         private String jwtSecret;

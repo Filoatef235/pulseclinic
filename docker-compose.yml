@@ -27,6 +27,9 @@ services:
       PULSECLINIC_AUTH_SECURE_COOKIES: "false"
       PULSECLINIC_CORS_ORIGINS: http://localhost:3000
       PULSECLINIC_UPLOAD_DIR: /app/uploads
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      EMAIL_FROM: ${EMAIL_FROM:-PulseClinic <onboarding@resend.dev>}
+      APP_PUBLIC_URL: ${APP_PUBLIC_URL:-http://localhost:3000}
     ports:
       - "8081:8080"
     depends_on:

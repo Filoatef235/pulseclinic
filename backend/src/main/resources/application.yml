@@ -45,6 +45,10 @@ pulseclinic:
     origins:
       - http://localhost:5173
       - http://localhost:3000
+  notifications:
+    public-url: ${APP_PUBLIC_URL:http://localhost:3000}
+    resend-api-key: ${RESEND_API_KEY:}
+    from: ${EMAIL_FROM:PulseClinic <onboarding@resend.dev>}
 
 logging:
   pattern:

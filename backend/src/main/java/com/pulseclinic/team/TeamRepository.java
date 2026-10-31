@@ -49,6 +49,7 @@ class TeamRepository {
     void createInvitation(UUID userId, String tokenHash, Instant expiresAt, UUID actorId) {
         jdbc.update("insert into team_invitations (user_id, token_hash, expires_at, created_by) values (?, ?, ?, ?)", userId, tokenHash, OffsetDateTime.ofInstant(expiresAt, ZoneOffset.UTC), actorId);
     }
+    java.util.Optional<String> emailByUserId(UUID userId) { return jdbc.query("select email from users where id=?", (rs, row) -> rs.getString(1), userId).stream().findFirst(); }
 
     Optional<InvitationAccount> invitationAccount(String tokenHash, Instant now) {
         return jdbc.query("select i.id invitation_id, u.id user_id, u.email, u.role from team_invitations i join users u on u.id=i.user_id where i.token_hash=? and i.used_at is null and i.revoked_at is null and i.expires_at>?", (rs, row) -> new InvitationAccount(rs.getObject("invitation_id", UUID.class), rs.getObject("user_id", UUID.class), rs.getString("email"), rs.getString("role")), tokenHash, OffsetDateTime.ofInstant(now, ZoneOffset.UTC)).stream().findFirst();
