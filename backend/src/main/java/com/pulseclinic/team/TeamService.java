@@ -1,7 +1,6 @@
 package com.pulseclinic.team;
 
 import com.pulseclinic.auth.AuthException;
-import com.pulseclinic.notification.EmailOutboxRepository;
 import com.pulseclinic.team.dto.CompleteInvitationRequest;
 import com.pulseclinic.team.dto.CreateTeamMemberRequest;
 import com.pulseclinic.team.dto.TeamMemberResponse;
@@ -24,12 +23,10 @@ public class TeamService {
     private static final SecureRandom RANDOM = new SecureRandom();
     private final TeamRepository repository;
     private final PasswordEncoder passwordEncoder;
-    private final EmailOutboxRepository outbox;
 
-    TeamService(TeamRepository repository, PasswordEncoder passwordEncoder, EmailOutboxRepository outbox) {
+    TeamService(TeamRepository repository, PasswordEncoder passwordEncoder) {
         this.repository = repository;
         this.passwordEncoder = passwordEncoder;
-        this.outbox = outbox;
     }
 
     @Transactional
@@ -47,11 +44,9 @@ public class TeamService {
                 ? repository.createDoctor(userId, request.specialtyId(), clean(request.fullName()), nullable(request.professionalTitle()), nullable(request.bio()), nullable(request.phone()))
                 : repository.createStaff(userId, clean(request.fullName()), nullable(request.professionalTitle()), nullable(request.bio()), nullable(request.phone()));
         String rawToken = randomToken();
-        String link = "/invite/" + rawToken;
         repository.createInvitation(userId, hash(rawToken), Instant.now().plus(24, ChronoUnit.HOURS), actorId);
-        outbox.queueLink(email, "TEAM_INVITATION", link);
         repository.audit(actorId, "TEAM_MEMBER_CREATED", request.role(), profileId);
-        return new TeamMemberResponse(userId, profileId, clean(request.fullName()), email, request.role(), nullable(request.professionalTitle()), nullable(request.bio()), nullable(request.phone()), null, true, profileComplete(request), null, null, email.endsWith("@pulseclinic.demo") ? link : null);
+        return new TeamMemberResponse(userId, profileId, clean(request.fullName()), email, request.role(), nullable(request.professionalTitle()), nullable(request.bio()), nullable(request.phone()), null, true, profileComplete(request), null, null, "/invite/" + rawToken);
     }
 
     @Transactional
@@ -89,12 +84,9 @@ public class TeamService {
         if (!repository.teamMemberExists(userId)) throw new AuthException("TEAM_MEMBER_NOT_FOUND", "Team member not found.");
         repository.revokeOpenInvitations(userId);
         String rawToken = randomToken();
-        String link = "/invite/" + rawToken;
         repository.createInvitation(userId, hash(rawToken), Instant.now().plus(24, ChronoUnit.HOURS), actorId);
-        boolean demo = repository.emailByUserId(userId).map(email -> email.endsWith("@pulseclinic.demo")).orElse(false);
-        repository.emailByUserId(userId).ifPresent(email -> outbox.queueLink(email, "TEAM_INVITATION", link));
         repository.audit(actorId, "TEAM_INVITATION_RESENT", "TEAM_MEMBER", userId);
-        return demo ? link : "";
+        return "/invite/" + rawToken;
     }
 
     @Transactional

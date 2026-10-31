@@ -36,7 +36,6 @@ class AuthRepository {
     void revokeAllRefreshTokens(UUID userId) { jdbc.update("update refresh_tokens set revoked_at = now() where user_id = ? and revoked_at is null", userId); }
     void recordSignIn(UUID userId) { jdbc.update("update users set last_signed_in_at = now(), updated_at = now() where id = ?", userId); }
     Optional<UUID> userIdByEmail(String email) { return jdbc.query("select id from users where email=?", (rs,i)->rs.getObject(1,UUID.class),email).stream().findFirst(); }
-    Optional<String> emailByUserId(UUID userId) { return jdbc.query("select email from users where id=?", (rs,i)->rs.getString(1),userId).stream().findFirst(); }
     void createVerification(UUID userId, String hash, Instant expires) { jdbc.update("insert into email_verification_tokens (user_id,token_hash,expires_at) values (?,?,?)",userId,hash,OffsetDateTime.ofInstant(expires,ZoneOffset.UTC)); }
     void createReset(UUID userId, String hash, Instant expires) { jdbc.update("insert into password_reset_tokens (user_id,token_hash,expires_at) values (?,?,?)",userId,hash,OffsetDateTime.ofInstant(expires,ZoneOffset.UTC)); }
     Optional<UUID> validVerification(String hash) { return jdbc.query("select user_id from email_verification_tokens where token_hash=? and used_at is null and expires_at>now()",(rs,i)->rs.getObject(1,UUID.class),hash).stream().findFirst(); }
