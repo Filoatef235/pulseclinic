@@ -3,6 +3,7 @@ target/
 *.iml
 .vscode/
 .env
+AGENTS.md
 *.log
 .DS_Store
 Thumbs.db
