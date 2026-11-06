@@ -1,6 +1,6 @@
 # PulseClinic
 
-Clinic appointment platform (v1 skeleton).
+Portfolio clinic appointment and operations platform. This project is a demonstration application and must not be used to store real patient or medical data.
 
 ## Stack
 
@@ -16,12 +16,7 @@ Spring Boot 3 (Java 17) · PostgreSQL 16 + Flyway · React + TypeScript + Tailwi
 
 Full stack in Docker: `docker compose up --build` then http://localhost:3000 (API http://localhost:8081/api/v1/health).
 
-Local demo data is enabled by Docker only:
-
-- Patient: `patient@pulseclinic.demo` / `DemoPatient!2026`
-- Doctors: `maya.hassan@pulseclinic.demo`, `omar.karim@pulseclinic.demo`, `lina.salem@pulseclinic.demo`, `samir.haddad@pulseclinic.demo`, `sofia.nasser@pulseclinic.demo`, or `ryan.moore@pulseclinic.demo` / `DemoDoctor!2026`
-- Staff: `staff@pulseclinic.demo`, `nora.ali@pulseclinic.demo`, `aya.farid@pulseclinic.demo`, or `leo.grant@pulseclinic.demo` / `DemoStaff!2026`
-- Admin: `admin@pulseclinic.demo` / `DemoAdmin!2026`
+Local Docker starts with fictional demo clinic data for development. Demo credentials are intentionally not published in this repository.
 
 ## Tests
 
@@ -36,4 +31,8 @@ Local demo data is enabled by Docker only:
 
 Connect this repo to Render or Railway. Run the API as a Docker web service (`backend/Dockerfile`), Postgres as the managed database, and the frontend as a static site or `frontend/Dockerfile`. Set the JDBC URL and a strong DB password. Paid/keep-alive hosting is required to avoid cold starts.
 
-API docs and booking come in later build steps.
+## Privacy and security
+
+- Do not commit `.env` files, API keys, app passwords, or real patient data.
+- Use only fictional data and `@pulseclinic.demo` identities for local demonstrations.
+- Copy `.env.example` to `.env` and replace every development secret before deployment.
